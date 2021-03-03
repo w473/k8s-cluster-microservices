@@ -1,3 +1,3 @@
-127.0.0.1 grafana.local
-127.0.0.1 jaeger.local
-127.0.0.1 kiali.local
+MINIKUBE grafana.local
+MINIKUBE jaeger.local
+MINIKUBE kiali.local
