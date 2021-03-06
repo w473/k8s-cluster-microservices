@@ -1,3 +1,1 @@
-MINIKUBE grafana.local
-MINIKUBE jaeger.local
-MINIKUBE kiali.local
+MINIKUBE_IP grafana.local jaeger.local prometheus.local kiali.local

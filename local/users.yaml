@@ -1,5 +1,6 @@
 apiVersion: apps/v1
 kind: Namespace
+name: users
 metadata:
   labels:
     istio-injection: enabled
