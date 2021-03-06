@@ -1,9 +1,29 @@
-apiVersion: apps/v1
+apiVersion: v1
 kind: Namespace
-name: users
 metadata:
+  name: users
   labels:
     istio-injection: enabled
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: users
+data:
+  ENV: dev
+  PORT: '80'
+  GRAYLOG: 'gelf://graylog:12201'
+  SSO: 'http://sso:5000'
+  SYS_AUTH_APP: 'users'
+  SYS_AUTH_KEY: 'users_password'
+  EMAIL_SERVICE: 'http://mailer'
+  DB_URL: 'http://db.users:8529'
+  DB_LOGIN: 'root'
+  DB_PASSWORD: 'pass'
+  DB_NAME: 'users'
+  ACTIVATION_URL: 'http://localhost:8080/activate/{{activationCode}}'
 
 ---
 apiVersion: apps/v1
@@ -11,30 +31,44 @@ kind: Deployment
 metadata:
   name: microservice
   namespace: users
-  labels:
-    app: users
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: userse
+      app: users
   template:
     metadata:
       labels:
-        app: usersa
+        app: users
     spec:
       containers:
-        - name: users-ms
-          image: users-ms:0.0.1
+        - name: node
+          image: docker.pkg.github.com/w473/users-microservice/users-ms:0.0.3
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
-#ADD CONFIGS!!
+          resources:
+            requests:
+              memory: '64Mi'
+              cpu: '250m'
+            limits:
+              memory: '128Mi'
+              cpu: '500m'
+          envFrom:
+            - configMapRef:
+                name: app-config
+          lifecycle:
+            postStart:
+              exec:
+                command: ['node', './build/bin/EnsureDb.js']
+      imagePullSecrets:
+        - name: regcred
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: www
+  name: webhost
   namespace: users
 spec:
   selector:
@@ -45,13 +79,14 @@ spec:
       targetPort: 80
 
 ---
-apiVersion: networking.istio.io/v1alpha3
+apiVersion: networking.istio.io/v1beta1
 kind: Gateway
 metadata:
-  name: www-gateway
+  name: gateway
+  namespace: users
 spec:
   selector:
-    istio: ingressgateway # use Istio default gateway implementation
+    istio: ingressgateway
   servers:
     - port:
         number: 80
@@ -59,17 +94,133 @@ spec:
         protocol: HTTP
       hosts:
         - 'users.local'
+        - 'db.users.local'
+
 ---
-apiVersion: networking.istio.io/v1alpha3
+apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: www
+  namespace: users
 spec:
   hosts:
     - 'users.local'
   gateways:
-    - www-gateway
+    - gateway
   http:
     - route:
         - destination:
-            host: www.users
+            host: webhost
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+  namespace: users
+data:
+  ARANGO_ROOT_PASSWORD: cGFzcw==
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+  namespace: users
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-apps-pvc
+  namespace: users
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+  namespace: users
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      volumes:
+        - name: apps
+          persistentVolumeClaim:
+            claimName: db-apps-pvc
+        - name: db
+          persistentVolumeClaim:
+            claimName: db-pvc
+      containers:
+        - name: arango
+          image: arangodb:3.7
+          ports:
+            - containerPort: 8529
+          resources:
+            requests:
+              memory: '64Mi'
+              cpu: '250m'
+            limits:
+              memory: '1Gi'
+              cpu: '1'
+          envFrom:
+            - secretRef:
+                name: db-secret
+          volumeMounts:
+            - mountPath: '/var/lib/arangodb3'
+              name: db
+            - mountPath: '/var/lib/arangodb3-apps'
+              name: apps
+      imagePullSecrets:
+        - name: regcred
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: users
+spec:
+  selector:
+    app: db
+  ports:
+    - protocol: TCP
+      port: 8529
+      targetPort: 8529
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: db
+  namespace: users
+spec:
+  hosts:
+    - 'db.users.local'
+  gateways:
+    - gateway
+  http:
+    - route:
+        - destination:
+            port:
+              number: 8529
+            host: db
