@@ -24,5 +24,5 @@ kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.9/sampl
 minikube tunnel
 
 kubectl -n mailer create secret generic regcred \
- --from-file=.dockerconfigjson='/home/jacek/.docker/config.json' \
+ --from-file=.dockerconfigjson='~/.docker/config.json' \
  --type=kubernetes.io/dockerconfigjson
