@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pvc
+  namespace: mailer
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+  namespace: mailer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: db-pvc
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          resources:
+            requests:
+              memory: '64Mi'
+              cpu: '250m'
+            limits:
+              memory: '1Gi'
+              cpu: '1'
+          envFrom:
+            - secretRef:
+                name: db-secret
+          volumeMounts:
+            - mountPath: '/var/data/mysql'
+              name: db
+      imagePullSecrets:
+        - name: regcred
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: mailer
+spec:
+  selector:
+    app: db
+  ports:
+    - protocol: TCP
+      name: tcp-db
+      port: 3306

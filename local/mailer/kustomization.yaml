@@ -1,0 +1,6 @@
+resources:
+  - 01-base.yaml
+  - 02-config.yaml
+  - 02-secret.yaml
+  - 03-db.yaml
+  - 04-web.yaml

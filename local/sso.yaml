@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: users
+  name: sso
   labels:
     istio-injection: enabled
 
@@ -10,43 +10,41 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: app-config
-  namespace: users
+  namespace: sso
 data:
-  ENV: dev
-  PORT: '80'
-  GRAYLOG: 'gelf://graylog:12201'
-  SSO: 'http://webhost.sso'
-  SYS_AUTH_APP: 'users'
-  SYS_AUTH_KEY: 'users_password'
-  EMAIL_SERVICE: 'http://webhost.mailer'
-  DB_URL: 'http://db.users:8529'
-  DB_LOGIN: 'root'
-  DB_PASSWORD: 'pass'
-  DB_NAME: 'users'
-  ACTIVATION_URL: 'http://localhost:8080/activate/{{activationCode}}'
+  FLASK_ENV: development
+  FLASK_APP: flaskr
+  SECRET_KEY: 'secret key'
+  DB_HOSTNAME: db.sso
+  DB_USERNAME: root
+  DB_PASSWORD: pass
+  DB_NAME: sso
+  USERS_SERVICE_URL: 'http://webhost.users'
+  GRAYLOG_HOST: 'graylog.graylog'
+  APPS_CREDENTIALS: '{"mailer":"JDJ5JDEyJFg1ZEdPMHRab2NKQ1JDemZiUWJDQXVFRzNTbTNYdkRSNHdkY2hlMTh6RFVKdEt6d1JmVC4y", "users":"JDJ5JDEyJHRBamltalJFa1p1aksweS80R1pPcE94Rjg1ZkZFUlROV0phN05pTFF0RUJpSDYvTnFMMWth"}'
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: microservice
-  namespace: users
+  namespace: sso
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: users
+      app: sso
   template:
     metadata:
       labels:
-        app: users
+        app: sso
     spec:
       containers:
         - name: node
-          image: docker.pkg.github.com/w473/users-microservice/users-ms:0.0.3
+          image: docker.pkg.github.com/w473/sso-microservice/sso-ms:0.0.1
           imagePullPolicy: Always
           ports:
-            - containerPort: 80
+            - containerPort: 5000
           resources:
             requests:
               memory: '64Mi'
@@ -57,10 +55,6 @@ spec:
           envFrom:
             - configMapRef:
                 name: app-config
-          lifecycle:
-            postStart:
-              exec:
-                command: ['node', './build/bin/EnsureDb.js']
       imagePullSecrets:
         - name: regcred
 
@@ -69,47 +63,49 @@ apiVersion: v1
 kind: Service
 metadata:
   name: webhost
-  namespace: users
+  namespace: sso
 spec:
   selector:
-    app: users
+    app: sso
   ports:
     - protocol: TCP
       name: http-app
       port: 80
+      targetPort: 5000
 
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: Gateway
 metadata:
   name: gateway
-  namespace: users
+  namespace: sso
 spec:
   selector:
     istio: ingressgateway
   servers:
     - port:
         number: 80
-        name: http-users
+        name: http-sso
         protocol: HTTP
       hosts:
-        - 'users.local'
-        - 'db.users.local'
+        - 'sso.local'
 
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
   name: www
-  namespace: users
+  namespace: sso
 spec:
   hosts:
-    - 'users.local'
+    - 'sso.local'
   gateways:
     - gateway
   http:
     - route:
         - destination:
+            port:
+              number: 80
             host: webhost
 
 ---
@@ -117,29 +113,16 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: db-secret
-  namespace: users
+  namespace: sso
 data:
-  ARANGO_ROOT_PASSWORD: cGFzcw==
+  MYSQL_ROOT_PASSWORD: cGFzcw==
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: db-pvc
-  namespace: users
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
-
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: db-apps-pvc
-  namespace: users
+  namespace: sso
 spec:
   accessModes:
     - ReadWriteOnce
@@ -152,7 +135,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: db
-  namespace: users
+  namespace: sso
 spec:
   replicas: 1
   selector:
@@ -164,17 +147,14 @@ spec:
         app: db
     spec:
       volumes:
-        - name: apps
-          persistentVolumeClaim:
-            claimName: db-apps-pvc
         - name: db
           persistentVolumeClaim:
             claimName: db-pvc
       containers:
-        - name: arango
-          image: arangodb:3.7
+        - name: mysql
+          image: mysql:8.0
           ports:
-            - containerPort: 8529
+            - containerPort: 3306
           resources:
             requests:
               memory: '64Mi'
@@ -186,10 +166,8 @@ spec:
             - secretRef:
                 name: db-secret
           volumeMounts:
-            - mountPath: '/var/lib/arangodb3'
+            - mountPath: '/var/data/mysql'
               name: db
-            - mountPath: '/var/lib/arangodb3-apps'
-              name: apps
       imagePullSecrets:
         - name: regcred
 
@@ -198,29 +176,11 @@ apiVersion: v1
 kind: Service
 metadata:
   name: db
-  namespace: users
+  namespace: sso
 spec:
   selector:
     app: db
   ports:
     - protocol: TCP
       name: tcp-db
-      port: 8529
-
----
-apiVersion: networking.istio.io/v1beta1
-kind: VirtualService
-metadata:
-  name: db
-  namespace: users
-spec:
-  hosts:
-    - 'db.users.local'
-  gateways:
-    - gateway
-  http:
-    - route:
-        - destination:
-            port:
-              number: 8529
-            host: db
+      port: 3306
